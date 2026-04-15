@@ -141,11 +141,37 @@ ${creatorName}`
   res.json({ status: 'ok', message: 'Emails sent and calendar event created.' });
 });
 
-// ── one-time OAuth2 helpers (run locally to generate refresh token) ──
-// GET /auth-url  → prints the Google consent URL to visit
-// GET /auth-token?code=XXX  → exchanges code for refresh token
+// ── debug endpoint ──
+app.get('/debug', async (req, res) => {
+  const info = {
+    env: {
+      GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID ? process.env.GOOGLE_CLIENT_ID.slice(0, 20) + '...' : 'NOT SET',
+      GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET ? process.env.GOOGLE_CLIENT_SECRET.slice(0, 6) + '...' : 'NOT SET',
+      GOOGLE_REFRESH_TOKEN: process.env.GOOGLE_REFRESH_TOKEN ? process.env.GOOGLE_REFRESH_TOKEN.slice(0, 20) + '...' : 'NOT SET',
+      TIMEZONE: process.env.TIMEZONE || 'NOT SET'
+    }
+  };
+
+  // Try to get an access token to confirm credentials work
+  try {
+    const { token } = await oauth2Client.getAccessToken();
+    info.accessToken = token ? 'OK — got access token successfully' : 'EMPTY — no token returned';
+  } catch (e) {
+    info.accessToken = 'FAILED: ' + e.message;
+  }
+
+  res.json(info);
+});
+
+// ── one-time OAuth2 helpers ──
+// Use a fresh client for token exchange so it doesn't interfere with the main client
 app.get('/auth-url', (req, res) => {
-  const url = oauth2Client.generateAuthUrl({
+  const authClient = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    'urn:ietf:wg:oauth:2.0:oob'
+  );
+  const url = authClient.generateAuthUrl({
     access_type: 'offline',
     prompt: 'consent',
     scope: [
@@ -153,22 +179,54 @@ app.get('/auth-url', (req, res) => {
       'https://www.googleapis.com/auth/calendar.events'
     ]
   });
-  res.send(`<p>Visit this URL to authorize:</p><a href="${url}" target="_blank">${url}</a>`);
+  res.send(`
+    <h2>Step 1: Authorize Google Access</h2>
+    <p>Click the link below and sign in with the Gmail account you want to send emails from.</p>
+    <p><a href="${url}" target="_blank" style="font-size:18px">${url}</a></p>
+    <p>After approving, you will be shown a code. Copy it and visit:<br>
+    <code>https://${req.headers.host}/auth-token?code=PASTE_CODE_HERE</code></p>
+  `);
 });
 
 app.get('/auth-token', async (req, res) => {
   const { code } = req.query;
-  if (!code) return res.status(400).send('Missing code parameter.');
+  if (!code) return res.status(400).send('Missing code parameter. Visit /auth-url first.');
+  const authClient = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    'urn:ietf:wg:oauth:2.0:oob'
+  );
   try {
-    const { tokens } = await oauth2Client.getToken(code);
+    const { tokens } = await authClient.getToken(decodeURIComponent(code));
+    if (!tokens.refresh_token) {
+      return res.send(`
+        <h2>No refresh token returned</h2>
+        <p>This usually means the account was already authorized before. To force a new refresh token:</p>
+        <ol>
+          <li>Go to <a href="https://myaccount.google.com/permissions" target="_blank">https://myaccount.google.com/permissions</a></li>
+          <li>Find your app and click <strong>Remove Access</strong></li>
+          <li>Then visit <a href="/auth-url">/auth-url</a> and authorize again</li>
+        </ol>
+      `);
+    }
     res.send(`
-      <h2>Authorization successful!</h2>
-      <p>Add this to your <code>.env</code> file on Railway:</p>
-      <pre>GOOGLE_REFRESH_TOKEN=${tokens.refresh_token}</pre>
-      <p><strong>Copy it now</strong> — it won't be shown again.</p>
+      <h2>Success! Here is your refresh token:</h2>
+      <textarea rows="4" cols="80" onclick="this.select()">${tokens.refresh_token}</textarea>
+      <h3>Next steps:</h3>
+      <ol>
+        <li>Copy the token above</li>
+        <li>Go to Railway → Variables → set <code>GOOGLE_REFRESH_TOKEN</code> to this value</li>
+        <li>Railway will redeploy automatically</li>
+        <li>Visit <a href="/debug">/debug</a> to confirm it's loaded correctly</li>
+      </ol>
     `);
   } catch (e) {
-    res.status(500).send('Token exchange failed: ' + e.message);
+    res.status(500).send(`
+      <h2>Token exchange failed</h2>
+      <p><strong>Error:</strong> ${e.message}</p>
+      <p>The authorization code may have expired (they last ~60 seconds). 
+      Please <a href="/auth-url">start over</a>.</p>
+    `);
   }
 });
 
