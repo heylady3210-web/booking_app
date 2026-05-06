@@ -230,7 +230,6 @@ app.get('/auth-token', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
 app.post('/newsletter/subscribe', async (req, res) => {
   const { first_name, email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email required' });
@@ -258,4 +257,5 @@ app.post('/newsletter/subscribe', async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Booking server running on port ${PORT}`));
