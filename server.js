@@ -231,4 +231,31 @@ app.get('/auth-token', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+app.post('/newsletter/subscribe', async (req, res) => {
+  const { first_name, email } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email required' });
+
+  try {
+    const response = await fetch('https://connect.mailerlite.com/api/subscribers', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.MAILERLITE_API_KEY}`
+      },
+      body: JSON.stringify({
+        email,
+        fields: { name: first_name },
+        groups: [process.env.MAILERLITE_GROUP_ID]
+      })
+    });
+
+    const data = await response.json();
+    if (!response.ok) return res.status(response.status).json(data);
+    res.json({ success: true });
+
+  } catch (err) {
+    console.error('MailerLite error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 app.listen(PORT, () => console.log(`Booking server running on port ${PORT}`));
